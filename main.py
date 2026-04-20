@@ -1,11 +1,14 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from openai import OpenAI
+from typing import List
+from ultralytics import YOLO
+from PIL import Image
+import io
 
 app = FastAPI()
 
-# Permiso para que Next.js se conecte
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
@@ -14,43 +17,93 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Aquí está la conexión a tu LM Studio local
+# Cliente para tu LLM Local (Qwen / Llama)
 client = OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
+
+# --- CARGA DEL MODELO DE VISIÓN LOCAL ---
+# Esto reemplaza al "senuelo_simulado" hardcodeado
+print("Cargando modelo de visión...")
+try:
+    modelo_vision = YOLO("best.pt")
+    print("¡Modelo cargado exitosamente!")
+except Exception as e:
+    print(f"Error al cargar best.pt: {e}")
+
+# Variable global temporal para guardar el último señuelo detectado
+ultimo_senuelo_detectado = "desconocido"
+
+
+class Message(BaseModel):
+    role: str
+    content: str
 
 
 class ChatRequest(BaseModel):
-    message: str
+    messages: List[Message]
+
+# 1. NUEVO ENDPOINT DE VISIÓN (Totalmente Offline)
+
+
+@app.post("/upload-image")
+async def upload_image(file: UploadFile = File(...)):
+    global ultimo_senuelo_detectado
+
+    try:
+        # Leemos la imagen que envía el frontend
+        image_data = await file.read()
+        imagen = Image.open(io.BytesIO(image_data))
+
+        # Pasamos la imagen a la IA de visión
+        resultados = modelo_vision(imagen)
+
+        # Extraemos los datos (Buscamos la caja con mayor confianza)
+        if len(resultados) > 0 and len(resultados[0].boxes) > 0:
+            mejor_caja = resultados[0].boxes[0]
+            clase_id = int(mejor_caja.cls[0].item())
+            confianza = float(mejor_caja.conf[0].item())
+
+            # Convertimos el ID a nombre (ej: 0 -> "Cuchara")
+            nombre_clase = resultados[0].names[clase_id]
+
+            ultimo_senuelo_detectado = nombre_clase
+
+            return {
+                "status": "success",
+                "detected": ultimo_senuelo_detectado,
+                "confidence": round(confianza, 2)
+            }
+        else:
+            return {"status": "not_found", "message": "No detecté ningún señuelo."}
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+# 2. ENDPOINT DE CHAT (Actualizado)
 
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
-    senuelo_simulado = "jig metálico"
+    global ultimo_senuelo_detectado
 
-    # Personalidad y contexto para Qwen
+    # Ahora el LLM usa el señuelo REAL que detectó la cámara
     system_prompt = (
-        "Eres un asistente virtual de inteligencia artificial, diseñado para proveer información técnica "
-        "y estructurada sobre pesca deportiva. Responde de manera formal, concisa y objetiva. "
-        f"Contexto del sistema: El usuario está consultando sobre un {senuelo_simulado}. "
-        "Limítate a entregar datos útiles sobre su uso y especies objetivo."
+        "Eres un asistente virtual experto en pesca deportiva. Tu objetivo es ser útil y mantener "
+        "una conversación fluida con el usuario. Responde sus preguntas directamente. "
+        f"Contexto del sistema: El usuario tiene actualmente un {ultimo_senuelo_detectado}. "
+        "Usa esta información para dar contexto cuando hables de pesca, pero eres libre de responder otras preguntas de forma natural."
     )
 
+    api_messages = [{"role": "system", "content": system_prompt}]
+
+    for msg in request.messages:
+        api_messages.append({"role": msg.role, "content": msg.content})
+
     try:
-        # FastAPI le pide a LM Studio que genere la respuesta
         response = client.chat.completions.create(
             model="local-model",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": request.message}
-            ],
+            messages=api_messages,
             temperature=0.7,
         )
-
-        return {
-            "role": "assistant",
-            "content": response.choices[0].message.content
-        }
+        return {"role": "assistant", "content": response.choices[0].message.content}
     except Exception as e:
-        return {
-            "role": "assistant",
-            "content": f"Error conectando a LM Studio: {str(e)}"
-        }
+        return {"role": "assistant", "content": f"Error conectando a LM Studio: {str(e)}"}
