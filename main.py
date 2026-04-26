@@ -1,13 +1,36 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from sqlalchemy.orm import Session
+from database import SessionLocal, Captura
 from pydantic import BaseModel
 from openai import OpenAI
 from typing import List
 from ultralytics import YOLO
 from PIL import Image
 import io
+import shutil
+import os
+import datetime
+
+# pylint: disable=no-member
+import numpy as np
 
 app = FastAPI()
+
+if not os.path.exists("uploads"):
+    os.makedirs("uploads")
+
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -107,3 +130,45 @@ async def chat_endpoint(request: ChatRequest):
         return {"role": "assistant", "content": response.choices[0].message.content}
     except Exception as e:
         return {"role": "assistant", "content": f"Error conectando a LM Studio: {str(e)}"}
+
+
+@app.post("/guardar-captura")
+async def guardar_captura(
+    especie: str = Form(...),
+    medida: float = Form(...),
+    senuelo: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    try:
+        # 1. Generar un nombre único para la imagen
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        nombre_archivo = f"{timestamp}_{file.filename}"
+        ruta_final = os.path.join("uploads", nombre_archivo)
+
+        # 2. Guardar el archivo físicamente
+        with open(ruta_final, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # 3. Guardar el registro en la base de datos
+        nueva_captura = Captura(
+            especie=especie,
+            medida_cm=medida,
+            senuelo=senuelo,
+            ruta_imagen=nombre_archivo
+        )
+        db.add(nueva_captura)
+        db.commit()
+        db.refresh(nueva_captura)
+
+        return {"status": "success", "message": "Captura guardada en la bitácora", "id": nueva_captura.id}
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/historial")
+async def obtener_historial(db: Session = Depends(get_db)):
+    # Traemos todas las capturas ordenadas por la más reciente
+    capturas = db.query(Captura).order_by(Captura.fecha.desc()).all()
+    return capturas
