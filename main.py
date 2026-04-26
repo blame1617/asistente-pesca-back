@@ -12,6 +12,7 @@ import io
 import shutil
 import os
 import datetime
+import re  # Mantenemos el import que venía del servidor
 
 # pylint: disable=no-member
 import numpy as np
@@ -110,15 +111,21 @@ async def chat_endpoint(request: ChatRequest):
 
     # Ahora el LLM usa el señuelo REAL que detectó la cámara
     system_prompt = (
-        "Eres un asistente virtual experto en pesca deportiva. Tu objetivo es ser útil y mantener "
-        "una conversación fluida con el usuario. Responde sus preguntas directamente. "
-        f"Contexto del sistema: El usuario tiene actualmente un {ultimo_senuelo_detectado}. "
-        "Usa esta información para dar contexto cuando hables de pesca, pero eres libre de responder otras preguntas de forma natural."
-    )
+        "Eres un asistente virtual experto en pesca deportiva estrictamente en Chile. "
+        "Usa formato Markdown para estructurar tus respuestas. "
+        "REGLA DE ORO: Solo puedes recomendar las siguientes especies locales según la zona: "
+        "- Zona Centro/Norte (Mar): Corvina, Lenguado, Sierra, Róbalo, Pejerrey de mar. "
+        "- Zona Sur/Lagos/Ríos (Agua dulce): Trucha Fario, Trucha Arcoíris, Salmón Chinook, Salmón Coho. "
+        f"Contexto de visión: El usuario te está mostrando un señuelo tipo: {ultimo_senuelo_detectado}. "
+        "Relaciona este señuelo ESPECÍFICAMENTE con las especies chilenas listadas arriba y el tipo de fondo (arena, roquerío, río). "
+        "No inventes especies que no existan en esta lista.")
 
     api_messages = [{"role": "system", "content": system_prompt}]
 
     for msg in request.messages:
+
+        if msg.role == "assistant" and ("¡Hola! Soy tu asistente" in msg.content or "📸 ¡Listo!" in msg.content):
+            continue
         api_messages.append({"role": msg.role, "content": msg.content})
 
     try:
@@ -127,7 +134,11 @@ async def chat_endpoint(request: ChatRequest):
             messages=api_messages,
             temperature=0.7,
         )
-        return {"role": "assistant", "content": response.choices[0].message.content}
+
+        raw_content = response.choices[0].message.content
+        clean_content = re.sub(r'<think>.*?</think>\n*',
+                               '', raw_content, flags=re.DOTALL).strip()
+        return {"role": "assistant", "content": clean_content}
     except Exception as e:
         return {"role": "assistant", "content": f"Error conectando a LM Studio: {str(e)}"}
 
