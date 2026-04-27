@@ -30,6 +30,19 @@ class Captura(Base):
     fecha = Column(DateTime, default=datetime.datetime.utcnow)
     ruta_imagen = Column(String)
 
+# --- NUEVA TABLA DE CONOCIMIENTO TÉCNICO (REGULACIONES) ---
+
+
+class EspecieChile(Base):
+    __tablename__ = "especies_chile"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String, unique=True, index=True)
+    zona = Column(String)
+    tipo_agua = Column(String)
+    senuelos = Column(String)
+    regulacion = Column(String)
+
 
 # Esta línea crea el archivo pesca.db y la tabla si no existen
 Base.metadata.create_all(bind=engine)
