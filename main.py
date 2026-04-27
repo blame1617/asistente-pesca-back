@@ -102,18 +102,99 @@ def consultar_regulaciones_db():
 def inicializar_conocimiento_pesca():
     db = SessionLocal()
     if db.query(EspecieChile).count() == 0:
+        print("Agent Log: Poblando base de datos con normativas técnicas de Sernapesca...")
         especies_base = [
-            EspecieChile(nombre="lenguado", zona="Todo el litoral", tipo_agua="Mar",
-                         senuelos="Vinilos, Jigs", regulacion="Talla mínima: 40 cm. Límite: 10 ejemplares."),
-            EspecieChile(nombre="corvina", zona="Todo el litoral", tipo_agua="Mar",
-                         senuelos="Chispas, Spinners", regulacion="Veda: 1 oct al 30 nov (Arica a Magallanes)."),
-            EspecieChile(nombre="salmon chinook", zona="Sur", tipo_agua="Dulce",
-                         senuelos="Cucharillas, Rapalas", regulacion="Temporada 15 sept a 31 marzo. 1 ejemplar diario."),
-            EspecieChile(nombre="trucha", zona="Sur y Cordillera", tipo_agua="Dulce",
-                         senuelos="Moscas, Spinners", regulacion="Cuota: 3 ejemplares o 15 kilos. Veda en invierno.")
+            # --- ESPECIES DE MAR ---
+            EspecieChile(
+                nombre="lenguado", 
+                zona="Todo el litoral (fondos arenosos)", 
+                tipo_agua="Mar",
+                senuelos="Vinilos tipo Grub o Shad, Jigs de arena, pececillos de profundidad.",
+                regulacion="Talla mínima: 40 cm. Límite: 10 ejemplares por jornada. Proteger zonas de desove en bahías."
+            ),
+            EspecieChile(
+                nombre="corvina", 
+                zona="Todo el litoral (rompientes)", 
+                tipo_agua="Mar",
+                senuelos="Chispas de plomo/acero, Spinners de mar, Minnows de acción rápida.",
+                regulacion="Talla mínima: 30 cm. Veda biológica: 1 de octubre al 30 de noviembre entre Arica y el Maule."
+            ),
+            EspecieChile(
+                nombre="sierra", 
+                zona="Norte a Centro-Sur", 
+                tipo_agua="Mar",
+                senuelos="Cucharillas ondulantes, Rapalas de colores brillantes, Jigs de superficie.",
+                regulacion="Talla mínima: 60 cm. Especie muy combativa, se recomienda cable de acero por su dentadura."
+            ),
+            EspecieChile(
+                nombre="pejeperro", 
+                zona="Norte y Centro (roqueríos)", 
+                tipo_agua="Mar",
+                senuelos="Imitaciones de cangrejo en vinilo, carnada natural (loco, caracol).",
+                regulacion="Talla mínima: 40 cm. Especie de crecimiento lento; se fomenta la pesca con devolución."
+            ),
+            EspecieChile(
+                nombre="robalo", 
+                zona="Centro a Extremo Sur (estuarios)", 
+                tipo_agua="Mar/Salobre",
+                senuelos="Vinilos pequeños, moscas tipo streamer, minnows suspendidos.",
+                regulacion="Talla mínima: 30 cm. Común en desembocaduras de ríos en la zona del Maule y Biobío."
+            ),
+            EspecieChile(
+                nombre="jurel", 
+                zona="Todo el litoral (aguas abiertas)", 
+                tipo_agua="Mar",
+                senuelos="Pequeños Jigs (Microjigging), plumas, señuelos de superficie tipo popper.",
+                regulacion="Talla mínima: 26 cm. Generalmente se pesca en cardúmenes durante el atardecer."
+            ),
+            EspecieChile(
+                nombre="congrio colorado", 
+                zona="Todo el litoral (fondos rocosos)", 
+                tipo_agua="Mar",
+                senuelos="Principalmente pesca de fondo con carnada, pero acepta Jigs pesados en profundidad.",
+                regulacion="Talla mínima: 40 cm. Muy apreciado en la gastronomía local."
+            ),
+            EspecieChile(
+                nombre="sargo", 
+                zona="Norte y Centro", 
+                tipo_agua="Mar",
+                senuelos="Vinilos muy pequeños (rockfishing), carnada blanca.",
+                regulacion="Talla mínima: 25 cm. Habita en zonas de mucha espuma y rompiente rocosa."
+            ),
+
+            # --- ESPECIES DE AGUA DULCE ---
+            EspecieChile(
+                nombre="salmon chinook", 
+                zona="Sur (Ríos Toltén, Serrano, Allipén)", 
+                tipo_agua="Dulce",
+                senuelos="Cucharillas pesadas (n° 5 o 6), Kwikfish, Rapalas de gran tamaño.",
+                regulacion="Temporada: Septiembre a Marzo (según cuenca). Cuota: 1 ejemplar diario. Prohibido el uso de carnada natural."
+            ),
+            EspecieChile(
+                nombre="trucha fario", 
+                zona="Centro a Sur (Ríos y Lagos)", 
+                tipo_agua="Dulce",
+                senuelos="Moscas (Secas/Ninfas), Spinners tipo Mepps, Rapalas Countdown.",
+                regulacion="Talla mínima: Variable por cuenca (generalmente 25-30 cm). Cuota: 3 ejemplares o 15 kg. Muchas zonas son solo Catch & Release."
+            ),
+            EspecieChile(
+                nombre="trucha arcoiris", 
+                zona="Centro a Sur", 
+                tipo_agua="Dulce",
+                senuelos="Cucharillas ondulantes, moscas atractoras, pequeños vinilos.",
+                regulacion="Temporada general: Noviembre a Mayo. Requiere licencia de pesca recreativa vigente."
+            ),
+            EspecieChile(
+                nombre="pejerrey chileno", 
+                zona="Centro a Sur (Ríos y Embalses)", 
+                tipo_agua="Dulce",
+                senuelos="Moscas muy pequeñas, micro-vinilos, flotadores con aparejo fino.",
+                regulacion="Talla mínima: 20 cm. Especie nativa; se recomienda extremar el cuidado en su manipulación."
+            )
         ]
         db.bulk_save_objects(especies_base)
         db.commit()
+        print(f"Agent Log: {len(especies_base)} especies cargadas exitosamente.")
     db.close()
 
 
@@ -128,7 +209,7 @@ herramientas_agente = [
         "type": "function",
         "function": {
             "name": "consultar_bitacora",
-            "description": "EJECUTA ESTA HERRAMIENTA SOLO si el usuario pregunta '¿qué he pescado?' o por su historial. NO sirve para guardar peces.",
+            "description": "EJECUTA ESTA HERRAMIENTA SOLO si el usuario pregunta '¿qué he pescado?' o por su historial o para evaluar capturas. NO sirve para guardar peces.",
         }
     },
     {
@@ -142,7 +223,7 @@ herramientas_agente = [
         "type": "function",
         "function": {
             "name": "consultar_regulaciones_especie",
-            "description": "EJECUTA ESTA HERRAMIENTA SOLO si el usuario pregunta por leyes, vedas o tallas mínimas permitidas.",
+            "description": "EJECUTA ESTA HERRAMIENTA SOLO si el usuario pregunta por sernapesca, leyes de pesca en chile, tallas minimas o si quiere saber si su captura es legal.",
         }
     }
 ]
@@ -151,14 +232,44 @@ herramientas_agente = [
 # ENDPOINT DEL AGENTE
 # ==========================================
 
+@app.post("/upload-image")
+async def upload_image(file: UploadFile = File(...)):
+    global ultimo_senuelo_detectado
 
+    try:
+        image_data = await file.read()
+        imagen = Image.open(io.BytesIO(image_data))
+        resultados = modelo_vision(imagen)
+
+        if len(resultados) > 0 and len(resultados[0].boxes) > 0:
+            mejor_caja = resultados[0].boxes[0]
+            clase_id = int(mejor_caja.cls[0].item())
+            confianza = float(mejor_caja.conf[0].item())
+            nombre_clase = resultados[0].names[clase_id]
+
+            print(f"DEBUG VISION - ID: {clase_id}, Nombre: {nombre_clase}, Confianza: {confianza}")
+
+            ultimo_senuelo_detectado = nombre_clase
+
+            return {
+                "status": "success",
+                "detected": ultimo_senuelo_detectado,
+                "confidence": round(confianza, 2)
+            }
+        else:
+            return {"status": "not_found", "message": "No detecté ningún señuelo."}
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
     system_prompt = (
-        "Eres un asistente de pesca en Chile. Responde brevemente en Markdown.\n"
-        "REGLAS:\n"
-        "1. NO uses herramientas para guardar peces.\n"
-        "2. Si preguntan qué señuelo tienen, mira el contexto visual y responde sin usar herramientas."
+        "Eres un experto asistente de pesca en Chile. Responde de forma concisa y amigable."
+        "Tienes acceso a herramientas. Úsalas cuando la intención del usuario lo requiera:\n"
+        "- 'consultar_regulaciones_especie': Para leyes, vedas o tallas minimas legales. Si el usuario pregunta por Sernapesca.\n"
+        "- 'consultar_bitacora': Para ver el historial de pesca y las capturas del usuario.\n"
+        "- 'abrir_seccion_nudos': Para enseñar a atar nudos." 
     )
 
     api_messages = [{"role": "system", "content": system_prompt}]
@@ -171,7 +282,7 @@ async def chat_endpoint(request: ChatRequest):
     # Inyección de contexto visual estricta
     if request.senuelo_actual not in ["Ninguno", "desconocido", "Analizando..."]:
         ultimo_mensaje = api_messages[-1]["content"]
-        api_messages[-1]["content"] = f"{ultimo_mensaje}\n\n[CONTEXTO VISUAL: El usuario muestra un {request.senuelo_actual}.]"
+        api_messages[-1]["content"] = f"{ultimo_mensaje}\n\n[DATO TÉCNICO: El usuario tiene en su mano un señuelo '{request.senuelo_actual}'.]"
 
     try:
         response = client.chat.completions.create(
