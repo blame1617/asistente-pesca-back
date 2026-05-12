@@ -43,6 +43,24 @@ class EspecieChile(Base):
     senuelos = Column(String)
     regulacion = Column(String)
 
+# ==========================================
+# NUEVA TABLA: PUNTOS DE PESCA (GIS OFFLINE)
+# ==========================================
+
+
+class PuntoPescaChile(Base):
+    __tablename__ = "puntos_pesca_chile"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String, index=True)
+    # Indexamos la región para optimizar las consultas WHERE cuando el usuario filtre en la app
+    region = Column(String, index=True)
+    latitud = Column(Float)
+    longitud = Column(Float)
+    tipo_agua = Column(String)  # Ej: "Mar", "Dulce", "Salobre"
+    especies_objetivo = Column(String)
+    recomendacion_tecnica = Column(String)
+
 
 # Esta línea crea el archivo pesca.db y la tabla si no existen
 Base.metadata.create_all(bind=engine)
