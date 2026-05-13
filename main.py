@@ -353,7 +353,7 @@ herramientas_agente = [
         "type": "function",
         "function": {
             "name": "consultar_puntos_pesca",
-            "description": "EJECUTA ESTA HERRAMIENTA SOLO si el usuario pregunta por lugares para pescar, dónde ir, picadas destacadas o hotspots geográficos en Chile según su región.",
+            "description": "EJECUTA ESTA HERRAMIENTA SOLO si el usuario pregunta por lugares para pescar, dónde ir, picadas destacadas o pide recomendaciones para pescar en cierto lugar de Chile.",
         }
     }
 ]
@@ -403,7 +403,7 @@ async def chat_endpoint(request: ChatRequest):
         "- 'consultar_regulaciones_especie': Para leyes, vedas o tallas minimas legales. Si el usuario pregunta por Sernapesca.\n"
         "- 'consultar_bitacora': Para ver el historial de pesca y las capturas del usuario.\n"
         "- 'abrir_seccion_nudos': Para enseñar a atar nudos.\n"
-        "- 'consultar_puntos_pesca': Para recomendar lugares de pesca o hotspots por región en Chile."
+        "- 'consultar_puntos_pesca': Para recomendar lugares de pesca o cuando el usuario pida recomendaciones para pescar en un lugar específico."
     )
 
     api_messages = [{"role": "system", "content": system_prompt}]
