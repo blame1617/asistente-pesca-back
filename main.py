@@ -403,7 +403,8 @@ async def chat_endpoint(request: ChatRequest):
         "- 'consultar_regulaciones_especie': Para leyes, vedas o tallas minimas legales. Si el usuario pregunta por Sernapesca.\n"
         "- 'consultar_bitacora': Para ver el historial de pesca y las capturas del usuario.\n"
         "- 'abrir_seccion_nudos': Para enseñar a atar nudos.\n"
-        "- 'consultar_puntos_pesca': Para recomendar lugares de pesca o cuando el usuario pida recomendaciones para pescar en un lugar específico."
+        "- 'consultar_puntos_pesca': Para recomendar lugares de pesca o cuando el usuario pida recomendaciones para pescar en un lugar específico.\n"
+        "Si la consulta es de otro tipo responde con tus conocimientos."
     )
 
     api_messages = [{"role": "system", "content": system_prompt}]
@@ -479,28 +480,28 @@ async def chat_endpoint(request: ChatRequest):
                     raw_content = re.sub(
                         r'<tool_call>.*?</tool_call>', '¡Enseguida! Te redirijo a la Academia de Nudos.', raw_content, flags=re.DOTALL)
                     raw_content = raw_content.replace(
-                        "abrir_seccion_nudos", "la sección de nudos")
+                        "abrir_seccion_nudos", "sección de nudos")
 
                 elif "consultar_regulaciones_especie" in raw_content:
                     datos = consultar_regulaciones_db()
                     raw_content = re.sub(
                         r'<tool_call>.*?</tool_call>', f'Consultando la base de datos...\n\n{datos}', raw_content, flags=re.DOTALL)
                     raw_content = raw_content.replace(
-                        "consultar_regulaciones_especie", "las regulaciones oficiales")
+                        "consultar_regulaciones_especie", "regulaciones oficiales")
 
                 elif "consultar_bitacora" in raw_content:
                     datos = consultar_bitacora_db()
                     raw_content = re.sub(
                         r'<tool_call>.*?</tool_call>', f'Revisando tu historial...\n\n{datos}', raw_content, flags=re.DOTALL)
                     raw_content = raw_content.replace(
-                        "consultar_bitacora", "tu bitácora")
+                        "consultar_bitacora", "bitácora")
 
                 elif "consultar_puntos_pesca" in raw_content or "puntos_pesca" in raw_content:
                     datos = consultar_puntos_pesca_db()
                     raw_content = re.sub(
                         r'<tool_call>.*?</tool_call>', f'Consultando el atlas GIS offline...\n\n{datos}', raw_content, flags=re.DOTALL)
                     raw_content = raw_content.replace(
-                        "consultar_puntos_pesca", "los puntos de pesca destacados")
+                        "consultar_puntos_pesca", "puntos de pesca destacados")
 
         clean_content = re.sub(r'<think>.*?</think>\n*',
                                '', raw_content, flags=re.DOTALL).strip()
