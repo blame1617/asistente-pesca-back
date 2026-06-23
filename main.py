@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, Form, Depends
+from fastapi import FastAPI, File, UploadFile, Form, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -14,9 +14,21 @@ import os
 import datetime
 import re
 import json
+from dotenv import load_dotenv
+from openai import AzureOpenAI
+import requests
+import time
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
+from azure.ai.agents import AgentsClient
+import psycopg2
+from decimal import Decimal
 
 # pylint: disable=no-member
 import numpy as np
+
+# Cargar variables de entorno
+load_dotenv()
 
 app = FastAPI()
 
@@ -44,6 +56,40 @@ app.add_middleware(
 
 client = OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
 
+print("Configurando ecosistema híbrido de IA...")
+
+# --- CLIENTE 1: Orquestador (Rápido, Stateless, Modo OpenAI v1 original) ---
+try:
+    endpoint_base = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+
+    # Truco maestro: Asegurarnos de que el endpoint termine sí o sí en /openai/v1
+    # para no tener que usar api_version jamás.
+    if not endpoint_base.endswith("/openai/v1"):
+        endpoint_base = f"{endpoint_base.rstrip('/')}/openai/v1"
+
+    orquestador_client = OpenAI(
+        base_url=endpoint_base,
+        api_key=os.getenv("AZURE_OPENAI_API_KEY")
+    )
+    deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+    print("✅ Orquestador configurado exitosamente (Modo OpenAI v1).")
+except Exception as e:
+    print(f"❌ Error en Orquestador: {e}")
+    orquestador_client = None
+
+# --- CLIENTE 2: Sub-Agentes (Nuevo estándar Foundry Responses API) ---
+try:
+    project_client = AIProjectClient(
+        endpoint=os.getenv("AZURE_AI_PROJECT_ENDPOINT"),
+        credential=DefaultAzureCredential()
+    )
+    # Extraemos el cliente mágico que maneja la Responses API
+    agentes_client = project_client.get_openai_client()
+    print("✅ AI Projects Client configurado exitosamente.")
+except Exception as e:
+    print(f"❌ Error en AI Projects Client: {e}")
+    agentes_client = None
+
 print("Cargando modelo de visión...")
 try:
     modelo_vision = YOLO("best.pt")
@@ -63,10 +109,18 @@ class ChatRequest(BaseModel):
     messages: List[Message]
     senuelo_actual: str = "desconocido"
 
+# Definimos el modelo de datos que esperamos recibir del Orquestador
+
+
+class ParametrosClima(BaseModel):
+    ubicacion: str
+    solicitud_especifica: str = ""
 
 # ==========================================
 # FUNCIONES DE BASE DE DATOS
 # ==========================================
+
+
 def consultar_bitacora_db():
     print("Agent Log: Accediendo a bitácora...")
     db = SessionLocal()
@@ -81,7 +135,8 @@ def consultar_bitacora_db():
             resultado += f"- {c.especie}, {c.medida_cm}cm, Señuelo: {c.senuelo} ({fecha_str})\n"
         return resultado
     except Exception as e:
-        return f"Error en DB: {str(e)}"
+        return "Error al acceder a la bitácora."
+
     finally:
         db.close()
 
@@ -320,6 +375,49 @@ def inicializar_puntos_pesca():
     db.close()
 
 
+def serializar_especiales(obj):
+    nombre_clase = type(obj).__name__
+
+    if nombre_clase == 'Decimal':
+        return float(obj)
+    if nombre_clase in ['datetime', 'date', 'time', 'Timestamp']:
+        return obj.isoformat()
+
+    # Si llega algún otro dato raro de PostgreSQL (como un UUID o JSONB),
+    # lo convertimos a texto plano en lugar de lanzar un error.
+    return str(obj)
+
+
+def ejecutar_sql_sandbox(query: str):
+    print(f"🔍 Ejecutando SQL generado por IA: {query}")
+    try:
+        # 1. Conexión usando EXCLUSIVAMENTE el usuario restringido
+        conn = psycopg2.connect(os.getenv("SUPABASE_IA_DB_URL"))
+        cursor = conn.cursor()
+
+        cursor.execute(query)
+
+        # 2. Protección de tokens: extraemos máximo 50 filas
+        resultados = cursor.fetchmany(50)
+
+        # 3. Extraemos los nombres de las columnas para que el JSON tenga sentido
+        nombres_columnas = [desc[0] for desc in cursor.description]
+        datos = [dict(zip(nombres_columnas, fila)) for fila in resultados]
+
+        cursor.close()
+        conn.close()
+
+        # Si la consulta fue exitosa pero no hay datos
+        if not datos:
+            return "No se encontraron registros para esta consulta."
+
+        # Usamos el serializador personalizado para procesar Decimals y Datetimes de forma segura
+        return json.dumps(datos, default=serializar_especiales)
+
+    except Exception as e:
+        return "Error consultando las estadísticas de la base de datos."
+
+
 inicializar_conocimiento_pesca()
 inicializar_puntos_pesca()
 
@@ -514,6 +612,162 @@ async def chat_endpoint(request: ChatRequest):
     except Exception as e:
         return {"role": "assistant", "content": f"Error conectando al LLM: {str(e)}"}
 
+herramientas_orquestador = [
+    {
+        "type": "function",
+        "function": {
+            "name": "enrutar_a_agente_clima",
+            "description": "Invocar UNICAMENTE cuando el usuario pregunte por el clima, mareas, viento, fases lunares o condiciones meteorológicas.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ubicacion": {
+                        "type": "string",
+                        "description": "Lugar de Chile por el que pregunta el usuario. Ej: 'Curanipe', 'Río Toltén'."
+                    },
+                    "solicitud_especifica": {
+                        "type": "string",
+                        "description": "La duda exacta sobre el clima."
+                    }
+                },
+                "required": ["ubicacion", "solicitud_especifica"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "enrutar_a_agente_analista",
+            "description": "Invocar UNICAMENTE cuando el usuario pregunte por historiales de captura, estadísticas en la nube, leaderboards o tamaños récord.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "detalle_consulta": {
+                        "type": "string",
+                        "description": "El objetivo de la búsqueda. Ej: 'Récord de Corvina'."
+                    }
+                },
+                "required": ["detalle_consulta"]
+            }
+        }
+    }
+]
+
+
+@app.post("/chat-cloud")
+async def chat_cloud_endpoint(request: ChatRequest):
+    if not orquestador_client:
+        return {"role": "assistant", "content": "Error: El Orquestador no está configurado."}
+
+    # Inyectar el System Prompt del Orquestador
+    mensajes_cloud = [
+        {
+            "role": "system",
+            "content": "Eres el Orquestador Central de una app de pesca en Chile. Responde de forma directa, técnica y usa el sistema métrico. REGLAS DE ENRUTAMIENTO ESTRICTAS: 1. Si preguntan del clima, mareas o viento, DEBES usar la herramienta 'enrutar_a_agente_clima'. 2. Si preguntan por estadísticas, leaderboards o su historial en la nube, DEBES usar la herramienta 'enrutar_a_agente_analista'. Para dudas generales de pesca (nudos, equipos, técnicas), responde tú mismo."
+        }
+    ]
+
+    # Construir el historial para dar contexto al modelo
+    for msg in request.messages:
+        if msg.role == "assistant" and ("¡Hola!" in msg.content or "📸" in msg.content):
+            continue
+        mensajes_cloud.append({"role": msg.role, "content": msg.content})
+
+    # Inyección de contexto visual (Señuelo actual detectado por YOLO)
+    if request.senuelo_actual not in ["Ninguno", "desconocido", "Analizando..."]:
+        mensajes_cloud[-1]["content"] += f"\n\n[INFO DEL SISTEMA: El usuario tiene un señuelo '{request.senuelo_actual}' en la cámara.]"
+
+    try:
+        response = orquestador_client.chat.completions.create(
+            model=deployment_name,
+            messages=mensajes_cloud,
+            tools=herramientas_orquestador,
+            tool_choice="auto",
+            temperature=0.3
+        )
+
+        mensaje_respuesta = response.choices[0].message
+
+        # INTERCEPTOR DE HERRAMIENTAS (Function Calling)
+        if mensaje_respuesta.tool_calls:
+            tool_call = mensaje_respuesta.tool_calls[0]
+            nombre_funcion = tool_call.function.name
+            import json
+            argumentos = json.loads(tool_call.function.arguments)
+
+            if nombre_funcion == "enrutar_a_agente_clima":
+                print(f"✅ ORQUESTADOR DELEGA -> AGENTE CLIMA: {argumentos}")
+                return {
+                    "role": "assistant",
+                    "content": f"*(Conectando con el satélite meteorológico para revisar {argumentos.get('ubicacion', 'la zona')}...)*",
+                    "action": "route_clima",
+                    "parametros_agente": argumentos
+                }
+
+            elif nombre_funcion == "enrutar_a_agente_analista":
+                consulta_usuario = argumentos.get('detalle_consulta', '')
+                print(
+                    f"✅ ORQUESTADOR DELEGA -> AGENTE ANALISTA: {consulta_usuario}")
+
+                try:
+                    # PASO 1: El Agente Analista (Text-to-SQL) genera la consulta
+                    res_analista = agentes_client.responses.create(
+                        input=[{"role": "user", "content": consulta_usuario}],
+                        extra_body={
+                            "agent_reference": {
+                                # Asegúrate de que este sea el nombre de tu agente en Foundry
+                                "name": "agente-analista",
+                                "version": "6",
+                                "type": "agent_reference"
+                            }
+                        }
+                    )
+
+                    sql_crudo = res_analista.output_text.strip()
+
+                    # Limpiamos el texto por si el modelo agregó formato markdown (```sql ... ```)
+                    sql_crudo = sql_crudo.replace(
+                        "```sql", "").replace("```", "").strip()
+
+                    # PASO 2: Ejecutamos el SQL en la base de datos blindada
+                    resultado_json = ejecutar_sql_sandbox(sql_crudo)
+
+                    # PASO 3: El Orquestador traduce el JSON frío a un comentario experto
+                    traduccion = orquestador_client.chat.completions.create(
+                        model=deployment_name,
+                        messages=[
+                            {"role": "system", "content": "Eres un asistente de pesca. Recibes una pregunta y un resultado JSON crudo de la base de datos. Traduce los datos a una respuesta natural, directa y amigable. Si hay un error, dile al usuario que la bitácora no tiene esos datos."},
+                            {"role": "user", "content": f"Pregunta: {consulta_usuario}\nDatos DB: {resultado_json}"}
+                        ],
+                        temperature=0.3
+                    )
+
+                    respuesta_final = traduccion.choices[0].message.content
+
+                    return {
+                        "role": "assistant",
+                        "content": respuesta_final,
+                        "action": None
+                    }
+
+                except Exception as e:
+                    print(f"❌ Error en el flujo del Analista:")
+                    return {
+                        "role": "assistant",
+                        "content": "Estuve revisando la bitácora, pero tuve un problema de conexión con los registros. Intentémoslo de nuevo más tarde."
+                    }
+
+        # RESPUESTA DIRECTA (Si es una pregunta general)
+        return {
+            "role": "assistant",
+            "content": mensaje_respuesta.content,
+            "action": None
+        }
+
+    except Exception as e:
+        print(f"Error en el orquestador:")
+        return {"role": "assistant", "content": f"Error conectando a Azure"}
+
 
 @app.post("/guardar-captura")
 async def guardar_captura(
@@ -572,3 +826,43 @@ async def obtener_puntos_pesca(db: Session = Depends(get_db)):
     para colocar todos los pines y filtrar de forma local mediante React.
     """
     return db.query(PuntoPescaChile).all()
+
+
+@app.post("/agente-clima")
+async def invocar_agente_clima(req: ParametrosClima):
+    if not agentes_client:
+        raise HTTPException(
+            status_code=500,
+            detail="Falta configuración del Agente o credenciales de Entra ID."
+        )
+
+    print(
+        f"🌦️ COMIENZA EVALUACIÓN AGENTIC: Despertando Agente Clima para {req.ubicacion}")
+
+    try:
+        # Llamada directa y sin estado a tu agente hospedado
+        response = agentes_client.responses.create(
+            input=[
+                {"role": "user", "content": f"Revisa el clima para: {req.ubicacion}. La duda puntual es: {req.solicitud_especifica}"}
+            ],
+            extra_body={
+                "agent_reference": {
+                    "name": "agente-clima",
+                    "version": "2",
+                    "type": "agent_reference"
+                }
+            }
+        )
+
+        # La respuesta ya viene empaquetada lista para usar
+        respuesta_final = response.output_text
+
+        print(f"✅ RESPUESTA AGENTE CLIMA GENERADA EXITOSAMENTE")
+        return {"respuesta": respuesta_final}
+
+    except Exception as e:
+        print(f"❌ Error crítico en Responses API: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Error de comunicación con Azure Responses Service."
+        )
